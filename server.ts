@@ -1,6 +1,11 @@
 import express, { type RequestHandler } from "express";
 import postgres from "postgres";
-import { createToken, verifyToken } from "./utils/jwt";
+import { createToken } from "./utils/jwt";
+import auth from "./middleware/auth";
+import validate from "./middleware/validate";
+import postLoginSchema from "./schemas/postLogin";
+import postOrderSchema from "./schemas/postOrders";
+import postRegisterSchema from "./schemas/postRegister";
 
 const sql = postgres({
   user: "postgres",
@@ -25,31 +30,11 @@ app.use((req, res, next) => {
   next();
 });
 
-// api -> express.json -> console middleware -> verifyUser -> get handler
-const verifyUser: RequestHandler = async (req, res, next) => {
-  let token = req.headers.token;
-  if (!token) {
-    return res.status(401).send();
-  }
-
-  // token is gonna be a string
-  token = Array.isArray(token) ? token[0] : token;
-
-  const decodedToken = await verifyToken(token);
-  if (!decodedToken) {
-    return res.status(401).send();
-  }
-
-  res.locals.token = decodedToken;
-
-  return next();
-};
-
 app.get("/healthcheck", (req, res) => {
   return res.send();
 });
 
-app.post("/login", async (req, res) => {
+app.post("/login", validate(postLoginSchema), async (req, res) => {
   const { username, password } = req.body;
   const user =
     await sql`SELECT * from public.user where username = ${username} and password = ${password}`;
@@ -67,14 +52,14 @@ app.post("/login", async (req, res) => {
   res.status(401).json({ message: "Unable to unauthorise" });
 });
 
-app.get("/users", verifyUser, async (req, res) => {
+app.get("/users", auth, async (req, res) => {
   const users =
     await sql`SELECT id, first_name, last_name, dob, address from public.user`;
 
   return res.json(users);
 });
 
-app.get("/users/:id", verifyUser, async (req, res) => {
+app.get("/users/:id", auth, async (req, res) => {
   let id = req.params.id;
   const user =
     await sql`SELECT id, first_name, last_name, dob, address from public.user WHERE id = ${id}`;
@@ -82,16 +67,21 @@ app.get("/users/:id", verifyUser, async (req, res) => {
   return res.json(user[0]);
 });
 
-app.post("/users", async (req, res) => {
-  let body = req.body;
-  const user =
-    await sql`INSERT INTO public.user (first_name, last_name, dob, address)
-  VALUES (${body.first_name}, ${body.last_name}, ${body.dob}, ${body.address})`;
-  console.log(user);
-  return res.json(user);
+app.post("/register", validate(postRegisterSchema), async (req, res) => {
+  const results =
+    await sql`select id from public.user where username = ${req.body.username}`;
+
+  if (results[0]) {
+    return res.status(400).json({ message: "Username already exists" });
+  }
+
+  await sql`INSERT INTO public.user (first_name, last_name, username, password, dob, address)
+  VALUES (${req.body.first_name}, ${req.body.last_name}, ${req.body.username}, ${req.body.password}, ${req.body.dob}, ${req.body.address})`;
+
+  return res.json({ message: "User has been created" });
 });
 
-app.get("/orders", verifyUser, async (req, res) => {
+app.get("/orders", auth, async (req, res) => {
   const id = res.locals.token.id as string;
   const orders =
     await sql`SELECT * from public.order_history where user_id = ${id}`;
@@ -105,19 +95,7 @@ app.get("/orders/:id", async (req, res) => {
   return res.json(order[0]);
 });
 
-const orderBodyValidation: RequestHandler = (req, res, next) => {
-  const valid = req.body.product && req.body.amount;
-
-  if (!valid) {
-    return res
-      .status(400)
-      .json({ message: "Body must contain a product and amount" });
-  }
-
-  return next();
-};
-
-app.post("/orders", orderBodyValidation, verifyUser, async (req, res) => {
+app.post("/orders", validate(postOrderSchema), auth, async (req, res) => {
   const id = res.locals.token.id as string;
   let body = req.body;
   const newOrder =
