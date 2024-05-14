@@ -7,8 +7,12 @@ import postLoginSchema from "./schemas/postLogin";
 import postOrderSchema from "./schemas/postOrders";
 import postRegisterSchema from "./schemas/postRegister";
 
+const bcrypt = require('bcrypt');
+
+const saltRounds = 10
+
 const sql = postgres({
-  user: "postgres",
+  user: "postgres", 
   database: "postgres",
   password: "bad_password_123",
   host: "ryan-testing.cfppyeac1zs9.eu-west-2.rds.amazonaws.com",
@@ -37,8 +41,14 @@ app.get("/healthcheck", (req, res) => {
 app.post("/login", validate(postLoginSchema), async (req, res) => {
   const { username, password } = req.body;
   const user =
-    await sql`SELECT * from public.user where username = ${username} and password = ${password}`;
+    await sql`SELECT * from public.user where username = ${username}`;
+    let userHash = user[0].password
+  const loginHash = bcrypt.compareSync(password, userHash)
 
+  if (!loginHash) {
+    return res.json({ message: "Incorrect password"})
+  }
+  
   if (user[0]) {
     const token = await createToken({
       id: user[0].id,
@@ -74,9 +84,11 @@ app.post("/register", validate(postRegisterSchema), async (req, res) => {
   if (results[0]) {
     return res.status(400).json({ message: "Username already exists" });
   }
+  const salt = await bcrypt.genSalt(saltRounds);
+  const hash = await bcrypt.hash(req.body.password, salt);
 
-  await sql`INSERT INTO public.user (first_name, last_name, username, password, dob, address)
-  VALUES (${req.body.first_name}, ${req.body.last_name}, ${req.body.username}, ${req.body.password}, ${req.body.dob}, ${req.body.address})`;
+  await sql`INSERT INTO public.user (first_name, last_name, username, dob, address, password)
+  VALUES (${req.body.first_name}, ${req.body.last_name}, ${req.body.username}, ${req.body.dob}, ${req.body.address}, ${hash}`;
 
   return res.json({ message: "User has been created" });
 });
